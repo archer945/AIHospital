@@ -1,0 +1,21 @@
+server:
+  port: 18080
+
+
+# 配置OpenAI
+spring:
+  ai:
+    openai:
+      api-key: sk-d1022725fada4052825318244e6ca73b
+      base-url: https://api.deepseek.com
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.8
+
+
+logging:
+  level:
+    root: error
+    org.springframework.ai.chat.client: DEBUG
+
