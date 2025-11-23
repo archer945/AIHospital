@@ -18,7 +18,7 @@ public class Prescription {
     private Integer registerId;
     
     @TableField("patient_id")
-    private String patientId;
+    private Integer patientId;
     
     @TableField("diagnosis")
     private String diagnosis;

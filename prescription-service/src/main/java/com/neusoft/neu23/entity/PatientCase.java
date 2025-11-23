@@ -14,8 +14,8 @@ public class PatientCase {
     @TableId(value = "case_id", type = IdType.AUTO)
     private Long caseId;
     
-    @TableField("register_id")
-    private Integer registerId;
+    @TableField("patient_id")
+    private Integer patientId;
     
     @TableField("symptoms")
     private String symptoms; // JSON格式存储症状
