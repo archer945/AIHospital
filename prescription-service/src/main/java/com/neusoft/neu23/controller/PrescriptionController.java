@@ -10,6 +10,7 @@ import com.neusoft.neu23.service.ConversationLogService;
 import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.service.PrescriptionService;
 import com.neusoft.neu23.tc.PrescriptionTools;
+import com.neusoft.neu23.util.PdfExportUtil;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,8 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -212,5 +215,27 @@ public class PrescriptionController {
                         .orElse("general"));
     }
 
+    @GetMapping("/export/pdf")
+    public ResponseEntity<byte[]> exportDiagnosis(@RequestParam(value = "registerId", required = false) @Min(1) Integer registerId,
+                                                  @RequestParam(value = "patientId", required = false) @Min(1) Integer patientId) {
+        if (registerId == null && patientId == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        String conversationId = resolveConversationId(registerId, patientId);
+        List<ConversationLog> logs = conversationLogService.listByConversationId(conversationId);
+
+        return logs.stream()
+                .filter(log -> "assistant".equalsIgnoreCase(log.getType()))
+                .reduce((first, second) -> second)
+                .map(log -> {
+                    byte[] pdf = PdfExportUtil.buildDiagnosisPdf("AI 诊断报告", log.getContent());
+                    String filename = "diagnosis-" + conversationId + ".pdf";
+                    return ResponseEntity.ok()
+                            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename)
+                            .contentType(MediaType.APPLICATION_PDF)
+                            .body(pdf);
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
 
 }

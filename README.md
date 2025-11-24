@@ -20,9 +20,11 @@ CREATE TABLE spring_ai_chat_memory (
 
 - `POST /prescription/diagnosis` — 接收 `msg` 以及可选 `registerId/patientId`，并把医生输入与 AI 输出写入 `spring_ai_chat_memory`。
 - `GET /prescription/conversations` — 通过 `registerId` 或 `patientId` 查询历史对话；支持 `page/size` 分页，响应带 `records/total/page/size`。
+- `GET /prescription/export/pdf` — 通过 `registerId` 或 `patientId` 导出最近一次 AI 诊断结果的 PDF，返回 `application/pdf`。
 
 ### 手动验证步骤
 
 1. 调用 `POST /prescription/diagnosis`，设置 `registerId=1001`（或任意数值），`patientId=5001`，并填写 `msg`。
 2. 查询数据库：`SELECT * FROM spring_ai_chat_memory WHERE conversation_id='register-1001';` 应看到 user 与 assistant 两条记录。
 3. 调用 `GET /prescription/conversations?registerId=1001&page=1&size=10`，响应中的 `records` 与数据库一致。
+4. 导出 PDF：浏览器或 Postman 访问 `GET /prescription/export/pdf?registerId=1001`，应自动下载 `diagnosis-register-1001.pdf`，内容为最近一次 AI 回复。
