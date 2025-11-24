@@ -1,8 +1,11 @@
 package com.neusoft.neu23.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.neusoft.neu23.dto.PrescriptionReviewDTO;
+import com.neusoft.neu23.dto.PrescriptionSubmitDTO;
 import com.neusoft.neu23.entity.PatientCase;
 import com.neusoft.neu23.service.PatientCaseService;
+import com.neusoft.neu23.service.PrescriptionService;
 import com.neusoft.neu23.tc.PrescriptionTools;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -10,6 +13,8 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,6 +32,9 @@ import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 public class PrescriptionController {
     private ChatClient chatClient;
     private final PatientCaseService patientCaseService;
+
+    @Autowired
+    private PrescriptionService prescriptionService;
     
     public PrescriptionController(OpenAiChatModel openAiChatModel, ChatMemory chatMemory,
                                   PrescriptionTools prescriptionTools,
@@ -122,6 +130,30 @@ public class PrescriptionController {
                     "success", false,
                     "message", "诊断失败: " + e.getMessage()
             ));
+        }
+    }
+
+    @GetMapping("/review/{prescriptionId}")
+    public ResponseEntity<PrescriptionReviewDTO> getPrescriptionForReview(@PathVariable Long prescriptionId) {
+        PrescriptionReviewDTO reviewDTO = prescriptionService.getPrescriptionForReview(prescriptionId);
+        if (reviewDTO == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(reviewDTO);
+    }
+
+    @PostMapping("/submitReview")
+    public ResponseEntity<Map<String, Object>> submitPrescriptionReview(@RequestBody PrescriptionSubmitDTO submitDTO) {
+        try {
+            boolean success = prescriptionService.reviewPrescription(submitDTO.getPrescription(), submitDTO.getPrescriptionDrugs());
+            if (success) {
+                return ResponseEntity.ok(Map.of("success", true, "message", "处方审核提交成功"));
+            } else {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("success", false, "message", "处方审核提交失败"));
+            }
+        } catch (Exception e) {
+            log.error("提交处方审核失败: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("success", false, "message", "提交处方审核失败: " + e.getMessage()));
         }
     }
 

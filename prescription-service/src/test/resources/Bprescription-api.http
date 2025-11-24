@@ -1,0 +1,35 @@
+### 获取待审核处方
+GET http://localhost:8081/prescription/review/1
+
+### 提交审核处方
+POST http://localhost:8081/prescription/submitReview
+Content-Type: application/json
+
+{
+  "prescription": {
+    "prescriptionId": 1,
+    "registerId": 1002,
+    "patientId": 666,
+    "diagnosis": "上呼吸道感染 (疑似病毒感染) - 医生已审核并修改",
+    "aiRecommendation": "{\"advice\": \"多休息,保持室内通风\"}",
+    "doctorId": 0,
+    "status": 1,
+    "createTime": "2025-11-23T14:30:00"
+  },
+  "prescriptionDrugs": [
+    {
+      "id": null,
+      "prescriptionId": 1,
+      "drugId": 101,
+      "dosage": "每日两次，每次两片（医生修改剂量）",
+      "reason": "退烧"
+    },
+    {
+      "id": null,
+      "prescriptionId": 1,
+      "drugId": 102,
+      "dosage": "每日一次，每次一袋",
+      "reason": "补充维生素"
+    }
+  ]
+}

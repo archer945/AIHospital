@@ -1,0 +1,6 @@
+GET http://localhost:8081/prescription/review/1
+User-Agent: IntelliJ HTTP Client/IntelliJ IDEA 2024.3.2.1
+Accept-Encoding: br, deflate, gzip, x-gzip
+Accept: */*
+
+<> 2025-11-23T230325.404.json
