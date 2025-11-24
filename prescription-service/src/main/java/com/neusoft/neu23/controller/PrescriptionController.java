@@ -1,9 +1,14 @@
 package com.neusoft.neu23.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.neusoft.neu23.entity.ConversationLog;
 import com.neusoft.neu23.entity.PatientCase;
+import com.neusoft.neu23.service.ConversationLogService;
 import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.tc.PrescriptionTools;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -11,11 +16,18 @@ import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 
@@ -24,13 +36,16 @@ import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 @RequestMapping("/prescription")
 @CrossOrigin
 @Slf4j
+@Validated
 public class PrescriptionController {
     private ChatClient chatClient;
     private final PatientCaseService patientCaseService;
+    private final ConversationLogService conversationLogService;
     
     public PrescriptionController(OpenAiChatModel openAiChatModel, ChatMemory chatMemory,
                                   PrescriptionTools prescriptionTools,
-                                  PatientCaseService patientCaseService) {
+                                  PatientCaseService patientCaseService,
+                                  ConversationLogService conversationLogService) {
         this.chatClient = ChatClient.builder(openAiChatModel)
                 .defaultSystem(SYSTEM_PROMPT) // 默认系统角色
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
@@ -38,12 +53,17 @@ public class PrescriptionController {
                 .defaultTools(prescriptionTools) // 添加处方保存工具
                 .build();
         this.patientCaseService = patientCaseService;
+        this.conversationLogService = conversationLogService;
     }
     @PostMapping("/diagnosis")
-    public ResponseEntity<Map<String, Object>> aiDiagnosis(@RequestParam(value = "msg",defaultValue = "你是谁") String msg,
-                                                           @RequestParam( value = "registerId" ,defaultValue = "neu.edu.cn") Integer registerId,
-                                                           @RequestParam( value = "patientId" ,defaultValue = "neu.edu.cn") Integer patientId) {
+    public ResponseEntity<Map<String, Object>> aiDiagnosis(@RequestParam(value = "msg") @NotBlank String msg,
+                                                           @RequestParam(value = "registerId", required = false) @Min(1) Integer registerId,
+                                                           @RequestParam(value = "patientId", required = false) @Min(1) Integer patientId) {
+        String conversationId = resolveConversationId(registerId, patientId);
         try {
+            // 记录医生输入
+            conversationLogService.recordLog(conversationId, "user", msg);
+
             // 1. 根据patientId查询患者病例信息
             StringBuilder patientInfoBuilder = new StringBuilder();
             patientInfoBuilder.append("患者当前症状描述：").append(msg).append("\n\n");
@@ -103,9 +123,12 @@ public class PrescriptionController {
             // 2. 调用AI，让AI根据SYSTEM_PROMPT自行判断是否需要收集更多信息
             String diagnosisResult = chatClient.prompt()
                     .user(patientInfoBuilder.toString())
-                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, registerId != null ? registerId.toString() : "default"))
+                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
                     .call()
                     .content();
+
+            // 记录AI回复
+            conversationLogService.recordLog(conversationId, "assistant", diagnosisResult);
 
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
@@ -117,12 +140,49 @@ public class PrescriptionController {
             return ResponseEntity.ok(result);
 
         } catch (Exception e) {
+            String errorMsg = "诊断失败: " + e.getMessage();
+            conversationLogService.recordLog(conversationId, "assistant_error", errorMsg);
             log.error("AI诊断失败: {}", e.getMessage(), e);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "诊断失败: " + e.getMessage()
+                    "message", errorMsg
             ));
         }
+    }
+
+    /**
+     * 医生查询历史对话
+     */
+    @GetMapping("/conversations")
+    public ResponseEntity<Map<String, Object>> getConversations(@RequestParam(value = "registerId", required = false) @Min(1) Integer registerId,
+                                                                @RequestParam(value = "patientId", required = false) @Min(1) Integer patientId,
+                                                                @RequestParam(value = "page", defaultValue = "1") @Min(1) long page,
+                                                                @RequestParam(value = "size", defaultValue = "20") @Min(1) long size) {
+        LambdaQueryWrapper<ConversationLog> wrapper = new LambdaQueryWrapper<>();
+        if (registerId != null || patientId != null) {
+            wrapper.eq(ConversationLog::getConversationId, resolveConversationId(registerId, patientId));
+        }
+        wrapper.orderByDesc(ConversationLog::getTimestamp);
+
+        Page<ConversationLog> pageResult =
+                conversationLogService.page(new Page<>(page, size), wrapper);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("success", true);
+        payload.put("records", pageResult.getRecords());
+        payload.put("total", pageResult.getTotal());
+        payload.put("page", pageResult.getCurrent());
+        payload.put("size", pageResult.getSize());
+
+        return ResponseEntity.ok(payload);
+    }
+
+    private String resolveConversationId(Integer registerId, Integer patientId) {
+        return Optional.ofNullable(registerId)
+                .map(id -> "register-" + id)
+                .orElseGet(() -> Optional.ofNullable(patientId)
+                        .map(id -> "patient-" + id)
+                        .orElse("general"));
     }
 
 }
