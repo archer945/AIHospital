@@ -175,14 +175,15 @@ public class PrescriptionController {
             log.error("提交处方审核失败: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("success", false, "message", "提交处方审核失败: " + e.getMessage()));
         }
+    }
     /**
      * 医生查询历史对话
      */
     @GetMapping("/conversations")
-    public ResponseEntity<Map<String, Object>> getConversations(@RequestParam(value = "registerId", required = false) @Min(1) Integer registerId,
-                                                                @RequestParam(value = "patientId", required = false) @Min(1) Integer patientId,
-                                                                @RequestParam(value = "page", defaultValue = "1") @Min(1) long page,
-                                                                @RequestParam(value = "size", defaultValue = "20") @Min(1) long size) {
+    public ResponseEntity<Map<String, Object>> getConversations (@RequestParam(value = "registerId", required = false) @Min(1) Integer registerId,
+            @RequestParam(value = "patientId", required = false) @Min(1) Integer patientId,
+    @RequestParam(value = "page", defaultValue = "1") @Min(1) long page,
+    @RequestParam(value = "size", defaultValue = "20") @Min(1) long size){
         LambdaQueryWrapper<ConversationLog> wrapper = new LambdaQueryWrapper<>();
         if (registerId != null || patientId != null) {
             wrapper.eq(ConversationLog::getConversationId, resolveConversationId(registerId, patientId));
@@ -202,6 +203,7 @@ public class PrescriptionController {
         return ResponseEntity.ok(payload);
     }
 
+
     private String resolveConversationId(Integer registerId, Integer patientId) {
         return Optional.ofNullable(registerId)
                 .map(id -> "register-" + id)
@@ -209,5 +211,6 @@ public class PrescriptionController {
                         .map(id -> "patient-" + id)
                         .orElse("general"));
     }
+
 
 }
