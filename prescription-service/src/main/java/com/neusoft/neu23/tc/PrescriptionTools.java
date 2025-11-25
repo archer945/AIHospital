@@ -6,11 +6,13 @@ import com.neusoft.neu23.entity.PatientCase;
 import com.neusoft.neu23.entity.Prescription;
 import com.neusoft.neu23.entity.PrescriptionDrug;
 import com.neusoft.neu23.entity.DrugInteraction;
+import com.neusoft.neu23.entity.Register;
 import com.neusoft.neu23.service.DrugInfoService;
 import com.neusoft.neu23.service.DrugInteractionService;
 import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.service.PrescriptionDrugService;
 import com.neusoft.neu23.service.PrescriptionService;
+import com.neusoft.neu23.service.RegisterService;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -38,18 +40,21 @@ public class PrescriptionTools {
     private final PatientCaseService patientCaseService;
     private final DrugInfoService drugInfoService;
     private final DrugInteractionService drugInteractionService;
+    private final RegisterService registerService;
     private final ObjectMapper objectMapper;
 
     public PrescriptionTools(PrescriptionService prescriptionService,
                             PrescriptionDrugService prescriptionDrugService,
                             PatientCaseService patientCaseService,
                             DrugInfoService drugInfoService,
-                            DrugInteractionService drugInteractionService) {
+                            DrugInteractionService drugInteractionService,
+                            RegisterService registerService) {
         this.prescriptionService = prescriptionService;
         this.prescriptionDrugService = prescriptionDrugService;
         this.patientCaseService = patientCaseService;
         this.drugInfoService = drugInfoService;
         this.drugInteractionService = drugInteractionService;
+        this.registerService = registerService;
         // 配置ObjectMapper忽略未知属性，支持字段名映射
         this.objectMapper = new ObjectMapper();
         this.objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -296,7 +301,8 @@ public class PrescriptionTools {
             prescription.setPatientId(patientId);
             prescription.setDiagnosis(diagnosis);
             prescription.setAiRecommendation(aiRecommendation);
-            prescription.setDoctorId(doctorId != null ? doctorId : 0);
+            Integer resolvedDoctorId = resolveDoctorId(registerId, doctorId);
+            prescription.setDoctorId(resolvedDoctorId);
             prescription.setStatus(0); // 0未审核，1已审核
             prescriptionService.save(prescription);
             log.info("处方保存成功，处方ID: {}", prescription.getPrescriptionId());
@@ -311,6 +317,26 @@ public class PrescriptionTools {
         } catch (Exception e) {
             log.error("保存处方失败: {}", e.getMessage(), e);
             return "保存处方失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 依据挂号ID获取医生ID（register.employee_id），若失败则回退到AI传入或0。
+     */
+    private Integer resolveDoctorId(Integer registerId, Integer fallbackDoctorId) {
+        try {
+            if (registerId == null) {
+                return fallbackDoctorId != null ? fallbackDoctorId : 0;
+            }
+            Register register = registerService.getById(registerId);
+            if (register == null || register.getEmployeeId() == null) {
+                log.warn("未能根据挂号ID获取医生ID，registerId: {}", registerId);
+                return fallbackDoctorId != null ? fallbackDoctorId : 0;
+            }
+            return register.getEmployeeId();
+        } catch (Exception e) {
+            log.error("解析医生ID失败，registerId: {}", registerId, e);
+            return fallbackDoctorId != null ? fallbackDoctorId : 0;
         }
     }
 

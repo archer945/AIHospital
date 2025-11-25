@@ -2,7 +2,11 @@ package com.neusoft.neu23.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.neusoft.neu23.entity.PatientCase;
+import com.neusoft.neu23.entity.PatientInfo;
+import com.neusoft.neu23.entity.Register;
 import com.neusoft.neu23.service.PatientCaseService;
+import com.neusoft.neu23.service.PatientInfoService;
+import com.neusoft.neu23.service.RegisterService;
 import com.neusoft.neu23.tc.PrescriptionTools;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -12,6 +16,7 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.util.StringUtils;
 
 import java.util.HashMap;
 import java.util.List;
@@ -25,12 +30,16 @@ import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 @CrossOrigin
 @Slf4j
 public class PrescriptionController {
-    private ChatClient chatClient;
+    private final ChatClient chatClient;
     private final PatientCaseService patientCaseService;
+    private final RegisterService registerService;
+    private final PatientInfoService patientInfoService;
     
     public PrescriptionController(OpenAiChatModel openAiChatModel, ChatMemory chatMemory,
                                   PrescriptionTools prescriptionTools,
-                                  PatientCaseService patientCaseService) {
+                                  PatientCaseService patientCaseService,
+                                  RegisterService registerService,
+                                  PatientInfoService patientInfoService) {
         this.chatClient = ChatClient.builder(openAiChatModel)
                 .defaultSystem(SYSTEM_PROMPT) // 默认系统角色
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
@@ -38,12 +47,14 @@ public class PrescriptionController {
                 .defaultTools(prescriptionTools) // 添加处方保存工具
                 .build();
         this.patientCaseService = patientCaseService;
+        this.registerService = registerService;
+        this.patientInfoService = patientInfoService;
     }
     @PostMapping("/diagnosis")
     public ResponseEntity<Map<String, Object>> aiDiagnosis(@RequestParam(value = "msg",defaultValue = "你是谁") String msg,
-                                                           @RequestParam( value = "registerId" ,defaultValue = "neu.edu.cn") Integer registerId,
-                                                           @RequestParam( value = "patientId" ,defaultValue = "neu.edu.cn") Integer patientId) {
+                                                           @RequestParam( value = "registerId", required = false) Integer registerId) {
         try {
+            Integer patientId = resolvePatientId(registerId);
             // 1. 根据patientId查询患者病例信息
             StringBuilder patientInfoBuilder = new StringBuilder();
             patientInfoBuilder.append("患者当前症状描述：").append(msg).append("\n\n");
@@ -125,4 +136,32 @@ public class PrescriptionController {
         }
     }
 
+    /**
+     * 根据挂号ID自动查找患者ID。
+     */
+    private Integer resolvePatientId(Integer registerId) {
+        try {
+            if (registerId == null) {
+                return null;
+            }
+            Register register = registerService.getById(registerId);
+            if (register == null || !StringUtils.hasText(register.getCardNumber())) {
+                log.warn("未找到挂号信息或身份证号为空，挂号ID: {}", registerId);
+                return null;
+            }
+            PatientInfo patientInfo = patientInfoService.getOne(
+                    new LambdaQueryWrapper<PatientInfo>()
+                            .eq(PatientInfo::getCardNumber, register.getCardNumber())
+                            .last("LIMIT 1")
+            );
+            if (patientInfo == null) {
+                log.warn("未找到对应的患者信息，挂号ID: {}, 身份证号: {}", registerId, register.getCardNumber());
+                return null;
+            }
+            return patientInfo.getPatientId();
+        } catch (Exception e) {
+            log.error("根据挂号ID获取患者ID失败，挂号ID: {}", registerId, e);
+            return null;
+        }
+    }
 }
