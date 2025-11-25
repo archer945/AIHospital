@@ -4,11 +4,16 @@ server:
 
 # 配置OpenAI
 spring:
+  application:
+    name: prescription-service
   datasource:
     url: jdbc:mysql://47.94.245.245:3306/AIHospital?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
   ai:
     openai:
       api-key: sk-d1022725fada4052825318244e6ca73b
