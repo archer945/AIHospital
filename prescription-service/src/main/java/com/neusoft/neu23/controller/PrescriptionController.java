@@ -11,13 +11,11 @@ import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.service.PrescriptionService;
 import com.neusoft.neu23.entity.PatientInfo;
 import com.neusoft.neu23.entity.Register;
-import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.service.PatientInfoService;
 import com.neusoft.neu23.service.RegisterService;
 import com.neusoft.neu23.tc.PrescriptionTools;
 import com.neusoft.neu23.util.PdfExportUtil;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -59,7 +57,7 @@ public class PrescriptionController {
     public PrescriptionController(OpenAiChatModel openAiChatModel, ChatMemory chatMemory,
                                   PrescriptionTools prescriptionTools,
                                   PatientCaseService patientCaseService,
-                                  ConversationLogService conversationLogService) {
+                                  ConversationLogService conversationLogService,
                                   RegisterService registerService,
                                   PatientInfoService patientInfoService) {
         this.chatClient = ChatClient.builder(openAiChatModel)
@@ -69,6 +67,7 @@ public class PrescriptionController {
                 .defaultTools(prescriptionTools) // 添加处方保存工具
                 .build();
         this.patientCaseService = patientCaseService;
+        this.conversationLogService = conversationLogService;
         this.registerService = registerService;
         this.patientInfoService = patientInfoService;
     }
@@ -136,12 +135,11 @@ public class PrescriptionController {
             // 2. 调用AI，让AI根据SYSTEM_PROMPT自行判断是否需要收集更多信息
             String diagnosisResult = chatClient.prompt()
                     .user(patientInfoBuilder.toString())
-                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
+                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, registerId != null ? registerId.toString():"default"))
                     .call()
                     .content();
 
-            // 记录AI回复
-            conversationLogService.recordLog(conversationId, "assistant", diagnosisResult);
+
 
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
@@ -153,12 +151,10 @@ public class PrescriptionController {
             return ResponseEntity.ok(result);
 
         } catch (Exception e) {
-            String errorMsg = "诊断失败: " + e.getMessage();
-            conversationLogService.recordLog(conversationId, "assistant_error", errorMsg);
             log.error("AI诊断失败: {}", e.getMessage(), e);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", errorMsg
+                    "message", "诊断失败" + e.getMessage()
             ));
         }
     }
@@ -272,5 +268,6 @@ public class PrescriptionController {
             log.error("根据挂号ID获取患者ID失败，挂号ID: {}", registerId, e);
             return null;
         }
+
     }
 }
