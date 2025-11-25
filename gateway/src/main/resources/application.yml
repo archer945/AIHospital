@@ -6,7 +6,7 @@ spring:
     name: gateway
   cloud:
     nacos:
-      server-addr: localhost:8848
+      server-addr: 60.205.113.149:8848
     gateway:
       routes:
         - id: prescription-service
