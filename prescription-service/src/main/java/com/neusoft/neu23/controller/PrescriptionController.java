@@ -35,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.neusoft.neu23.entity.Prescription;
 
 import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 
@@ -198,6 +199,55 @@ public class PrescriptionController {
 
         Page<ConversationLog> pageResult =
                 conversationLogService.page(new Page<>(page, size), wrapper);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("success", true);
+        payload.put("records", pageResult.getRecords());
+        payload.put("total", pageResult.getTotal());
+        payload.put("page", pageResult.getCurrent());
+        payload.put("size", pageResult.getSize());
+
+        return ResponseEntity.ok(payload);
+    }
+
+    /**
+     * 列出所有待审核的处方（status = 0）
+     */
+    @GetMapping("/pending")
+    public ResponseEntity<Map<String, Object>> getPendingPrescriptions(
+            @RequestParam(value = "page", defaultValue = "1") @Min(1) long page,
+            @RequestParam(value = "size", defaultValue = "20") @Min(1) long size) {
+
+        LambdaQueryWrapper<Prescription> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Prescription::getStatus, 0);
+        wrapper.orderByDesc(Prescription::getCreateTime);
+
+        Page<Prescription> pageResult = prescriptionService.page(new Page<>(page, size), wrapper);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("success", true);
+        payload.put("records", pageResult.getRecords());
+        payload.put("total", pageResult.getTotal());
+        payload.put("page", pageResult.getCurrent());
+        payload.put("size", pageResult.getSize());
+
+        return ResponseEntity.ok(payload);
+    }
+
+    /**
+     * 列出处方（支持分页），默认按审核状态排序：未审核(status=0) 在前，已审核(status=1) 在后；再按创建时间倒序
+     */
+    @GetMapping("/list")
+    public ResponseEntity<Map<String, Object>> listPrescriptions(
+            @RequestParam(value = "page", defaultValue = "1") @Min(1) long page,
+            @RequestParam(value = "size", defaultValue = "20") @Min(1) long size) {
+
+        LambdaQueryWrapper<Prescription> wrapper = new LambdaQueryWrapper<>();
+        // 按状态升序（0 未审核在前），再按创建时间倒序
+        wrapper.orderByAsc(Prescription::getStatus)
+               .orderByDesc(Prescription::getCreateTime);
+
+        Page<Prescription> pageResult = prescriptionService.page(new Page<>(page, size), wrapper);
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("success", true);

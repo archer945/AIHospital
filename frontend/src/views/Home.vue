@@ -68,6 +68,7 @@
 
           <div class="chat-history" ref="chatHistoryRef" @scroll="handleChatScroll">
             <p class="muted">会话记录</p>
+                <div v-if="isConversationsLoading" class="muted">正在加载历史对话…</div>
             <div v-if="!chatHistory.length" class="empty">等待患者输入信息…</div>
             <ul v-else>
               <li v-for="(item, index) in chatHistory" :key="index" :class="item.role">
@@ -108,15 +109,56 @@
       <div v-else class="doctor-grid">
         <div class="panel card">
           <header>
-            <div>
-              <h3>处方审核</h3>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <div>
+                  <h3>待审核处方列表</h3>
+                  <p class="muted">点击条目可在弹窗中查看处方详情并进行审核</p>
+                </div>
+                <div style="display:flex; gap:12px; align-items:center;">
+                  <input v-model="searchQuery" placeholder="搜索：处方ID / 患者ID / 挂号ID / 诊断关键词" class="search-input" />
+                  <button class="btn btn-secondary" @click="fetchList">刷新</button>
+                </div>
+              </div>
             </div>
-            <button class="btn btn-secondary" @click="refreshReview">刷新</button>
           </header>
 
-          <div class="muted">点击下面按钮在弹窗中打开完整审核界面</div>
-          <div class="form-actions" style="margin-top: 12px;">
-            <button class="btn btn-primary" @click="openReviewModal">打开审核弹窗</button>
+          <div v-if="isListLoading" class="muted">正在加载处方列表…</div>
+          <div v-else>
+            <div v-if="!prescriptions.length" class="empty">当前没有处方</div>
+            <ul v-else class="prescription-list">
+              <li v-for="pres in filteredList" :key="pres.prescriptionId" class="pres-item" @click="openPrescription(pres.prescriptionId)">
+                <div class="pres-left">
+                  <div class="pres-icon">Rx</div>
+                </div>
+                <div class="pres-body">
+                  <div class="pres-title-row">
+                    <div class="pres-title">处方 #{{ pres.prescriptionId }}</div>
+                    <div class="pres-badges">
+                      <span v-if="pres.status == 0" class="badge badge-warning">未审核</span>
+                      <span v-else class="badge" style="background: rgba(16,185,129,0.08); color:#047857; border:1px solid rgba(16,185,129,0.12)">已审核</span>
+                    </div>
+                  </div>
+                  <div class="pres-meta">
+                    <span class="meta-item">患者ID: <strong>{{ pres.patientId || '-' }}</strong></span>
+                    <span class="meta-item">挂号ID: <strong>{{ pres.registerId || '-' }}</strong></span>
+                  </div>
+                  <div class="pres-snippet muted">{{ pres.diagnosis ? (pres.diagnosis.length > 120 ? pres.diagnosis.slice(0,120)+'...' : pres.diagnosis) : '无诊断摘要' }}</div>
+                </div>
+                <div class="pres-right">
+                  <div style="display:flex; flex-direction:column; gap:8px; align-items:center; justify-content:center; height:100%;">
+                    <button class="btn btn-primary btn-sm view-btn" @click.stop="openPrescription(pres.prescriptionId)">查看</button>
+                    <div class="pres-time">{{ formatTime(pres.createTime || pres.create_time || new Date()) }}</div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+            <!-- 分页控件 -->
+            <div class="pagination" style="display:flex; justify-content:center; align-items:center; gap:12px; margin-top:12px;">
+              <button class="btn btn-secondary" :disabled="currentPage<=1" @click="prevPage">上一页</button>
+              <span class="muted">第 {{ currentPage }} / {{ Math.max(1, Math.ceil((totalCount || 0) / pageSize)) }} 页（共 {{ totalCount }} 条）</span>
+              <button class="btn btn-secondary" :disabled="currentPage>=Math.max(1, Math.ceil((totalCount || 0) / pageSize))" @click="nextPage">下一页</button>
+            </div>
           </div>
         </div>
       </div>
@@ -135,20 +177,11 @@
                 <div class="panel">
                   <header>
                     <div>
-                      <h4>处方审核检索</h4>
-                      <p class="muted">根据处方编号加载 AI 提交的处方数据</p>
+                      <h4>处方详情</h4>
+                      <p class="muted">正在查看所选处方，点击“刷新”可重新加载当前处方数据</p>
                     </div>
                     <button class="btn btn-secondary" @click="refreshReview">刷新</button>
                   </header>
-                  <form class="review-form" @submit.prevent="loadReview">
-                    <label>
-                      处方ID
-                      <input ref="reviewIdInputRef" v-model="reviewIdInput" placeholder="请输入处方ID" />
-                    </label>
-                    <button class="btn btn-primary" type="submit" :disabled="isReviewLoading">
-                      {{ isReviewLoading ? '加载中…' : '获取处方' }}
-                    </button>
-                  </form>
                   <div v-if="!reviewData" class="empty">等待输入处方ID…</div>
                   <div v-else class="review-summary">
                     <h4>处方概览</h4>
@@ -229,7 +262,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onBeforeUnmount, onMounted, nextTick, watch } from 'vue'
+import { reactive, ref, computed, onBeforeUnmount, onMounted, nextTick, watch } from 'vue'
 import { marked } from 'marked'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -245,6 +278,8 @@ const chatHistoryRef = ref(null)
 const shouldAutoScroll = ref(true)
 const diagnosisResult = ref(null)
 const isChatLoading = ref(false)
+const isConversationsLoading = ref(false)
+const lastLoadedIds = reactive({ registerId: null, patientId: null })
 const notification = reactive({
   show: false,
   type: 'success',
@@ -256,14 +291,6 @@ marked.setOptions({
   breaks: true
 })
 
-const overviewCards = [
-  { title: '今日问诊', value: '32', sub: 'AI 初诊已完成', trend: '+12%' },
-  { title: '待审核处方', value: '6', sub: '需医生确认', trend: '-2' },
-  { title: '药品相互作用报警', value: '1', sub: '已推送提醒', trend: '+1' },
-  { title: '医生在线', value: '4', sub: '审核团队', trend: '+1' }
-]
-
-const reviewIdInput = ref('')
 const reviewData = ref(null)
 const reviewForm = reactive({
   prescription: null,
@@ -272,12 +299,27 @@ const reviewForm = reactive({
 const isReviewLoading = ref(false)
 const isSubmitLoading = ref(false)
 const showReviewModal = ref(false)
-const reviewIdInputRef = ref(null)
+const prescriptions = ref([])
+const isListLoading = ref(false)
+const searchQuery = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
+const totalCount = ref(0)
+const filteredList = computed(() => {
+  const q = String(searchQuery.value || '').trim().toLowerCase()
+  if (!q) return prescriptions.value
+  return prescriptions.value.filter((p) => {
+    const pid = p.patientId ? String(p.patientId) : ''
+    const rid = p.registerId ? String(p.registerId) : ''
+    const presId = p.prescriptionId ? String(p.prescriptionId) : ''
+    const diag = p.diagnosis ? String(p.diagnosis).toLowerCase() : ''
+    return presId.includes(q) || pid.includes(q) || rid.includes(q) || diag.includes(q)
+  })
+})
 
 const openReviewModal = async () => {
   showReviewModal.value = true
   await nextTick()
-  if (reviewIdInputRef.value) reviewIdInputRef.value.focus()
 }
 
 const closeReviewModal = () => {
@@ -297,9 +339,91 @@ watch(showReviewModal, (val) => {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  // 页面加载时尝试读取历史对话（若已填写挂号ID或患者ID）
+  if (patientForm.registerId || patientForm.patientId) {
+    // 不阻塞加载页面 UI
+    loadConversations().catch((e) => console.error('初始加载历史对话失败', e))
+  }
 })
 
+// 监听 ID 变化，自动加载历史对话
+watch([
+  () => patientForm.registerId,
+  () => patientForm.patientId
+], ([newReg, newPid], [oldReg, oldPid]) => {
+  const reg = newReg ? String(newReg).trim() : null
+  const pid = newPid ? String(newPid).trim() : null
+  if ((reg || pid) && (lastLoadedIds.registerId !== reg || lastLoadedIds.patientId !== pid)) {
+    // 小的节流，避免短时间重复触发
+    setTimeout(() => {
+      loadConversations().catch((e) => console.error('watch loadConversations error', e))
+    }, 120)
+  }
+})
+
+// 当切换到医生面板时加载待审核列表
+watch(activeTab, (val) => {
+  if (val === 'doctor') {
+    fetchList().catch((e) => console.error('fetchList error', e))
+  }
+})
+
+const loadConversations = async (page = 1, size = 200) => {
+  const reg = patientForm.registerId ? String(patientForm.registerId).trim() : null
+  const pid = patientForm.patientId ? String(patientForm.patientId).trim() : null
+  // 如果没有任何标识，跳过加载
+  if (!reg && !pid) return
+  // 如果已加载过相同 ID 则跳过
+  if (lastLoadedIds.registerId === reg && lastLoadedIds.patientId === pid) return
+
+  isConversationsLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    if (reg) params.set('registerId', reg)
+    if (pid) params.set('patientId', pid)
+    params.set('page', String(page))
+    params.set('size', String(size))
+
+    const res = await fetch(`${API_BASE}/prescription/conversations?${params.toString()}`)
+    if (!res.ok) throw new Error('无法获取历史对话')
+    const data = await res.json()
+    console.debug('loadConversations response:', data)
+    const records = Array.isArray(data.records) ? data.records : []
+    // 后端按时间倒序返回，前端展示为从旧到新
+    const ordered = records.slice().reverse()
+    const mapped = ordered.map((r) => ({
+      role: (r.type && r.type.toLowerCase() === 'user') ? 'user' : 'ai',
+      content: r.content,
+      time: r.timestamp || r.createTime || new Date()
+    }))
+    // 用历史记录替换当前聊天记录（保留当前会话中已存在的 AI 响应）
+    chatHistory.value = mapped
+    if (mapped.length === 0) {
+      showToast('info', '未找到历史对话')
+    } else {
+      showToast('success', `已加载历史记录 ${mapped.length} 条`)
+    }
+    lastLoadedIds.registerId = reg
+    lastLoadedIds.patientId = pid
+    shouldAutoScroll.value = true
+    await nextTick()
+    scrollChatToBottom(true)
+  } catch (e) {
+    console.error('loadConversations error', e)
+    showToast('error', e.message || '加载历史对话失败')
+  } finally {
+    isConversationsLoading.value = false
+  }
+}
+
 const sendMessage = async () => {
+  // 在发送前确保历史对话已加载（若 ID 变化或未加载）
+  const currentReg = patientForm.registerId ? String(patientForm.registerId).trim() : null
+  const currentPid = patientForm.patientId ? String(patientForm.patientId).trim() : null
+  if ((currentReg || currentPid) && (lastLoadedIds.registerId !== currentReg || lastLoadedIds.patientId !== currentPid)) {
+    await loadConversations()
+  }
+
   const message = patientForm.msg.trim()
   if (!message) {
     return showToast('error', '请先填写症状及补充信息')
@@ -354,13 +478,14 @@ const resetChat = () => {
   shouldAutoScroll.value = true
 }
 
-const loadReview = async () => {
-  if (!reviewIdInput.value) {
-    return showToast('error', '请输入处方ID')
+const loadReview = async (id) => {
+  const targetId = id || reviewForm.prescription?.prescriptionId
+  if (!targetId) {
+    return showToast('error', '缺少处方ID，无法加载处方')
   }
   isReviewLoading.value = true
   try {
-    const response = await fetch(`${API_BASE}/prescription/review/${reviewIdInput.value}`)
+    const response = await fetch(`${API_BASE}/prescription/review/${targetId}`)
     if (!response.ok) {
       throw new Error('未找到对应处方')
     }
@@ -377,9 +502,48 @@ const loadReview = async () => {
   }
 }
 
+const fetchList = async (page = currentPage.value, size = pageSize.value) => {
+  isListLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/prescription/list?page=${page}&size=${size}`)
+    if (!res.ok) throw new Error('无法获取处方列表')
+    const data = await res.json()
+    prescriptions.value = Array.isArray(data.records) ? data.records : []
+    totalCount.value = data.total || 0
+    currentPage.value = data.page || page
+  } catch (e) {
+    console.error('fetchList error', e)
+    showToast('error', e.message || '加载处方列表失败')
+  } finally {
+    isListLoading.value = false
+  }
+}
+
+const prevPage = () => {
+  if (currentPage.value > 1) {
+    currentPage.value--
+    fetchList()
+  }
+}
+
+const nextPage = () => {
+  const totalPages = Math.max(1, Math.ceil((totalCount.value || 0) / pageSize.value))
+  if (currentPage.value < totalPages) {
+    currentPage.value++
+    fetchList()
+  }
+}
+
+const openPrescription = async (prescriptionId) => {
+  showReviewModal.value = true
+  await nextTick()
+  await loadReview(prescriptionId)
+}
+
 const refreshReview = () => {
-  if (reviewIdInput.value) {
-    loadReview()
+  const id = reviewForm.prescription?.prescriptionId
+  if (id) {
+    loadReview(id)
   } else {
     reviewData.value = null
     reviewForm.prescription = null
@@ -756,6 +920,75 @@ onBeforeUnmount(() => {
 .chat-history li.ai {
   background: rgba(16, 185, 129, 0.06);
   border-color: rgba(16, 185, 129, 0.15);
+}
+
+.prescription-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.pres-item {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(14,165,233,0.12);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pres-item:hover { background: rgba(14,165,233,0.03); }
+.pres-meta { display:flex; gap:12px; align-items:center; font-size:14px }
+.pres-snippet { font-size:13px }
+
+/* Enhanced prescription card styles */
+.pres-item {
+  padding: 20px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(14,165,233,0.08);
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  min-height: 88px;
+  transition: transform .14s ease, box-shadow .14s ease, background .14s ease;
+}
+.pres-item:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 12px 32px rgba(14,165,233,0.07);
+}
+.pres-left { width:72px; display:flex; align-items:flex-start; justify-content:center }
+.pres-icon {
+  width:56px; height:56px; border-radius:12px; display:flex; align-items:center; justify-content:center;
+  background: linear-gradient(135deg, rgba(14,165,233,0.12), rgba(99,102,241,0.08));
+  color: var(--primary-blue, #0ea5e9); font-weight:800; font-size:16px;
+  align-self:flex-start;
+}
+.pres-body { flex:1; display:flex; flex-direction:column; gap:8px; text-align:left }
+.pres-title-row { display:flex; justify-content:space-between; align-items:flex-start }
+.pres-title { font-size:16px; font-weight:700 }
+.pres-badges { display:flex; gap:8px; align-items:center }
+.badge { padding:6px 10px; border-radius:999px; font-size:12px; }
+.badge-warning { background: rgba(250,204,21,0.12); color: #c27803; border: 1px solid rgba(250,204,21,0.18) }
+.pres-right { width:140px; display:flex; flex-direction:column; gap:10px; align-items:flex-end; margin-left: auto; justify-content: center }
+.pres-time { font-size:12px; color:var(--light-text); }
+.btn-sm { padding:6px 10px; font-size:13px }
+.view-btn { padding:10px 16px; font-size:14px; border-radius: 999px; box-shadow: 0 6px 18px rgba(14,165,233,0.12); }
+.pres-snippet {
+  font-size:14px;
+  color: var(--dark-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.search-input {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(14,165,233,0.12);
+  min-width: 360px;
 }
 
 .chat-content {
