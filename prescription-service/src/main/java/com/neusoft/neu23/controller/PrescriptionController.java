@@ -4,25 +4,28 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.neusoft.neu23.dto.PrescriptionReviewDTO;
 import com.neusoft.neu23.dto.PrescriptionSubmitDTO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.neusoft.neu23.entity.DrugInfo;
 import com.neusoft.neu23.entity.ConversationLog;
 import com.neusoft.neu23.entity.PatientCase;
+import com.neusoft.neu23.entity.Prescription;
+import com.neusoft.neu23.entity.PrescriptionDrug;
 import com.neusoft.neu23.service.ConversationLogService;
 import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.service.PrescriptionService;
 import com.neusoft.neu23.entity.PatientInfo;
 import com.neusoft.neu23.entity.Register;
 import com.neusoft.neu23.service.PatientInfoService;
+import com.neusoft.neu23.service.PrescriptionDrugService;
 import com.neusoft.neu23.service.RegisterService;
+import com.neusoft.neu23.service.DrugInfoService;
 import com.neusoft.neu23.tc.PrescriptionTools;
 import com.neusoft.neu23.util.PdfExportUtil;
 import jakarta.validation.constraints.Min;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -36,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import com.neusoft.neu23.entity.Prescription;
+import java.util.Objects;
 
 import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 
@@ -48,35 +52,41 @@ import static com.neusoft.neu23.cfg.AiConfig.SYSTEM_PROMPT;
 public class PrescriptionController {
     private final ChatClient chatClient;
     private final PatientCaseService patientCaseService;
-
-    @Autowired
-    private PrescriptionService prescriptionService;
+    private final PrescriptionService prescriptionService;
     private final ConversationLogService conversationLogService;
     private final RegisterService registerService;
     private final PatientInfoService patientInfoService;
+    private final PrescriptionDrugService prescriptionDrugService;
+    private final DrugInfoService drugInfoService;
     
     public PrescriptionController(OpenAiChatModel openAiChatModel, ChatMemory chatMemory,
                                   PrescriptionTools prescriptionTools,
                                   PatientCaseService patientCaseService,
                                   ConversationLogService conversationLogService,
                                   RegisterService registerService,
-                                  PatientInfoService patientInfoService) {
+                                  PatientInfoService patientInfoService,
+                                  PrescriptionService prescriptionService,
+                                  PrescriptionDrugService prescriptionDrugService,
+                                  DrugInfoService drugInfoService) {
         this.chatClient = ChatClient.builder(openAiChatModel)
                 .defaultSystem(SYSTEM_PROMPT) // 默认系统角色
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
-                .defaultAdvisors( new SimpleLoggerAdvisor() )
                 .defaultTools(prescriptionTools) // 添加处方保存工具
                 .build();
         this.patientCaseService = patientCaseService;
         this.conversationLogService = conversationLogService;
         this.registerService = registerService;
         this.patientInfoService = patientInfoService;
+        this.prescriptionService = prescriptionService;
+        this.prescriptionDrugService = prescriptionDrugService;
+        this.drugInfoService = drugInfoService;
     }
     @PostMapping("/diagnosis")
     public ResponseEntity<Map<String, Object>> aiDiagnosis(@RequestParam(value = "msg",defaultValue = "你是谁") String msg,
                                                            @RequestParam( value = "registerId", required = false) Integer registerId) {
         try {
             Integer patientId = resolvePatientId(registerId);
+            String conversationId = resolveConversationId(registerId, patientId);
             // 1. 根据patientId查询患者病例信息
             StringBuilder patientInfoBuilder = new StringBuilder();
             patientInfoBuilder.append("患者当前症状描述：").append(msg).append("\n\n");
@@ -136,7 +146,7 @@ public class PrescriptionController {
             // 2. 调用AI，让AI根据SYSTEM_PROMPT自行判断是否需要收集更多信息
             String diagnosisResult = chatClient.prompt()
                     .user(patientInfoBuilder.toString())
-                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, registerId != null ? registerId.toString():"default"))
+                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
                     .call()
                     .content();
 
@@ -147,6 +157,7 @@ public class PrescriptionController {
             result.put("diagnosis", diagnosisResult);
             result.put("registerId", registerId);
             result.put("patientId", patientId);
+            result.put("conversationId", conversationId);
 
             log.info("AI诊断完成，挂号ID: {}, 患者ID: {}", registerId, patientId);
             return ResponseEntity.ok(result);
@@ -289,6 +300,36 @@ public class PrescriptionController {
                             .body(pdf);
                 })
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/export/prescription/{prescriptionId}")
+    public ResponseEntity<byte[]> exportPrescription(@PathVariable Long prescriptionId) {
+        Prescription prescription = prescriptionService.getById(prescriptionId);
+        if (prescription == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<PrescriptionDrug> drugs = prescriptionDrugService.list(
+                new LambdaQueryWrapper<PrescriptionDrug>()
+                        .eq(PrescriptionDrug::getPrescriptionId, prescriptionId)
+        );
+        Map<Long, DrugInfo> drugInfoMap = new HashMap<>();
+        List<Long> drugIds = drugs.stream()
+                .map(PrescriptionDrug::getDrugId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (!drugIds.isEmpty()) {
+            drugInfoService.listByIds(drugIds)
+                    .forEach(info -> drugInfoMap.put(info.getDrugId(), info));
+        }
+
+        byte[] pdf = PdfExportUtil.buildPrescriptionPdf(prescription, drugs, drugInfoMap);
+        String filename = "prescription-" + prescriptionId + ".pdf";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename)
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
     }
 
     /**

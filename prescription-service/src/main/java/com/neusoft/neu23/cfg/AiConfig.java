@@ -2,22 +2,16 @@ package com.neusoft.neu23.cfg;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class AiConfig {
-
-    private final   ChatMemory chatMemory;
-
-    public AiConfig(ChatMemory chatMemory) {
-        this.chatMemory = chatMemory;
-    }
 
     public static final String SYSTEM_PROMPT = """
     你是一个专注于医疗领域的 AI 助手，专门帮助医生和患者提供精准的医学分析、症状提取、药品推荐和处方生成。
@@ -185,23 +179,24 @@ public class AiConfig {
     """;
 
     /**
-     * 3  自动配置OpenAiChatModel
-     */
-    @Autowired
-    private OpenAiChatModel openAiChatModel;
-
-    /**
      * 在Spring容器中注入ChatClient
      * @param openAiChatModel
      * @return
      */
     @Bean
     @Qualifier("chatClient0")
-    public ChatClient chatClient0(    OpenAiChatModel openAiChatModel ) {
+    public ChatClient chatClient0(    OpenAiChatModel openAiChatModel, ChatMemory chatMemory ) {
         return ChatClient.builder(openAiChatModel)
                 .defaultSystem(SYSTEM_PROMPT) // 默认系统角色
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
-                .defaultAdvisors( new SimpleLoggerAdvisor() )
+                .build();
+    }
+
+    @Bean
+    public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository) {
+        return MessageWindowChatMemory.builder()
+                .chatMemoryRepository(chatMemoryRepository)
+                .maxMessages(50)
                 .build();
     }
 }
