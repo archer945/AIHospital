@@ -179,7 +179,10 @@
                       <h4>处方详情</h4>
                       <p class="muted">正在查看所选处方，点击“刷新”可重新加载当前处方数据</p>
                     </div>
-                    <button class="btn btn-secondary" @click="refreshReview">刷新</button>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      <button class="btn btn-secondary" @click="refreshReview">刷新</button>
+                      <button class="btn btn-primary" @click="exportCurrentPrescription" :disabled="!reviewForm.prescription">生成 PDF</button>
+                    </div>
                   </header>
                   <div v-if="!reviewData" class="empty">等待输入处方ID…</div>
                   <div v-else class="review-summary">
@@ -555,6 +558,41 @@ const refreshReview = async () => {
   } finally {
     isReviewLoading.value = false
   }
+}
+
+const exportPrescriptionPdf = async (prescriptionId) => {
+  if (!prescriptionId) return showToast('error', '缺少处方ID，无法导出')
+  try {
+    showToast('info', '正在生成 PDF，请稍候...')
+    const res = await fetch(`${API_BASE}/prescription/export/prescription/${prescriptionId}`)
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(text || '导出失败')
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('Content-Disposition') || ''
+    let filename = `prescription-${prescriptionId}.pdf`
+    const match = disposition.match(/filename\*=?UTF-8''([^;]+)|filename=\"?([^\";]+)\"?/)
+    if (match) filename = decodeURIComponent(match[1] || match[2] || filename)
+
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    showToast('success', 'PDF 已下载')
+  } catch (e) {
+    console.error('exportPrescriptionPdf error', e)
+    showToast('error', e.message || '导出失败')
+  }
+}
+
+const exportCurrentPrescription = () => {
+  const id = reviewForm.prescription?.prescriptionId
+  exportPrescriptionPdf(id)
 }
 
 const addDrugRow = () => {
