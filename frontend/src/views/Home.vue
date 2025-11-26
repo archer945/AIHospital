@@ -88,12 +88,19 @@
           <form class="form-grid chat-input-area" @submit.prevent="sendMessage">
             <label class="full">
               症状及补充信息
-              <textarea
-                v-model="patientForm.msg"
-                rows="4"
-                placeholder="描述症状细节、持续时间、既往病史、用药情况、伴随症状等"
-                @keydown.enter.exact.prevent="handleEnterSend"
-              ></textarea>
+              <div style="display:flex; gap:8px; align-items:flex-start;">
+                <textarea
+                  v-model="patientForm.msg"
+                  rows="4"
+                  placeholder="描述症状细节、持续时间、既往病史、用药情况、伴随症状等"
+                  @keydown.enter.exact.prevent="handleEnterSend"
+                  style="flex:1;"
+                ></textarea>
+                <button type="button" class="btn btn-secondary" @click="toggleVoiceInput" :disabled="isChatLoading" style="white-space:nowrap; height:fit-content; padding:8px 12px;" :class="{ active: isVoiceListening }">
+                  <span v-if="!isVoiceListening">🎤 语音</span>
+                  <span v-else style="color:#0ea5e9; font-weight:600;">🎤 记录中...</span>
+                </button>
+              </div>
             </label>
             <div class="full form-actions">
               <button class="btn btn-primary" type="submit" :disabled="isChatLoading">
@@ -312,6 +319,10 @@ marked.setOptions({
   breaks: true
 })
 
+// 语音输入相关
+const isVoiceListening = ref(false)
+const voiceRecognition = ref(null)
+
 const reviewData = ref(null)
 const reviewForm = reactive({
   prescription: null,
@@ -505,6 +516,70 @@ const sendMessage = async () => {
 }
 
 // `resetChat` 已移除 — 使用页面刷新或手动清空输入替代
+
+// 初始化语音识别
+const initVoiceRecognition = () => {
+  if (voiceRecognition.value) return
+  
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (!SpeechRecognition) {
+    showToast('error', '浏览器不支持语音输入')
+    return
+  }
+
+  const recognition = new SpeechRecognition()
+  recognition.lang = 'zh-CN'
+  recognition.continuous = false
+  recognition.interimResults = false
+
+  recognition.onstart = () => {
+    isVoiceListening.value = true
+  }
+
+  recognition.onresult = (event) => {
+    let transcript = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript
+    }
+    if (transcript) {
+      patientForm.msg = (patientForm.msg || '') + transcript
+    }
+  }
+
+  recognition.onerror = (event) => {
+    console.error('语音识别错误:', event.error)
+    let errorMsg = '语音识别失败'
+    switch (event.error) {
+      case 'no-speech':
+        errorMsg = '未检测到语音'
+        break
+      case 'network':
+        errorMsg = '网络错误'
+        break
+      case 'aborted':
+        errorMsg = '识别已中止'
+        break
+      default:
+        errorMsg = `错误: ${event.error}`
+    }
+    showToast('error', errorMsg)
+  }
+
+  recognition.onend = () => {
+    isVoiceListening.value = false
+  }
+
+  voiceRecognition.value = recognition
+}
+
+const toggleVoiceInput = () => {
+  initVoiceRecognition()
+  if (isVoiceListening.value && voiceRecognition.value) {
+    voiceRecognition.value.stop()
+  } else if (voiceRecognition.value) {
+    voiceRecognition.value.start()
+  }
+}
 
 const loadReview = async (id) => {
   const targetId = id || reviewForm.prescription?.prescriptionId
@@ -1276,6 +1351,12 @@ onBeforeUnmount(() => {
 
 .toast.error {
   background: var(--warning-red);
+}
+
+/* 语音输入按钮样式 */
+.btn.btn-secondary:active {
+  background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+  color: white;
 }
 
 .fade-enter-active,
