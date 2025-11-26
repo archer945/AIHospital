@@ -1,5 +1,7 @@
 package com.neusoft.neu23.util;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
 import com.lowagie.text.Font;
@@ -23,6 +25,8 @@ import java.util.Objects;
  * 简易 PDF 导出工具，用于生成诊断报告与处方单。
  */
 public final class PdfExportUtil {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private PdfExportUtil() {}
 
@@ -86,7 +90,7 @@ public final class PdfExportUtil {
                     document.add(new Paragraph((i + 1) + ". " + drugName, labelFont));
                     document.add(new Paragraph("剂量: " + valueOrFallback(drug.getDosage(), "未填写"), bodyFont));
                     if (StringUtils.hasText(drug.getReason())) {
-                        document.add(new Paragraph("说明: " + drug.getReason(), bodyFont));
+                        document.add(new Paragraph("说明: " + formatMaybeJson(drug.getReason()), bodyFont));
                     }
                     document.add(new Paragraph("\n", bodyFont));
                 }
@@ -94,7 +98,7 @@ public final class PdfExportUtil {
 
             if (StringUtils.hasText(prescription.getAiRecommendation())) {
                 document.add(new Paragraph("AI 建议/注意事项", labelFont));
-                document.add(new Paragraph(prescription.getAiRecommendation(), bodyFont));
+                document.add(new Paragraph(formatMaybeJson(prescription.getAiRecommendation()), bodyFont));
             }
 
             document.close();
@@ -110,5 +114,25 @@ public final class PdfExportUtil {
 
     private static String valueOrFallback(String value, String fallback) {
         return StringUtils.hasText(value) ? value : fallback;
+    }
+
+    /**
+     * If the text is JSON (object/array), pretty print it for PDF readability; otherwise return original.
+     */
+    private static String formatMaybeJson(String text) {
+        if (!StringUtils.hasText(text)) {
+            return text;
+        }
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(text);
+            if (node.isTextual()) {
+                // unwrap quoted string
+                String unwrapped = node.asText();
+                return StringUtils.hasText(unwrapped) ? unwrapped : text;
+            }
+            return OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+        } catch (Exception ignored) {
+            return text;
+        }
     }
 }
