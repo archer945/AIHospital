@@ -52,7 +52,6 @@
               <h3>AI 问诊面板</h3>
               <p class="muted">按照系统提示提供症状、病史、体征等信息</p>
             </div>
-            <button class="btn btn-secondary" @click="resetChat">重置会话</button>
           </header>
 
           <form class="form-grid chat-meta-form" @submit.prevent>
@@ -471,12 +470,7 @@ const sendMessage = async () => {
   }
 }
 
-const resetChat = () => {
-  chatHistory.value = []
-  diagnosisResult.value = null
-  patientForm.msg = ''
-  shouldAutoScroll.value = true
-}
+// `resetChat` 已移除 — 使用页面刷新或手动清空输入替代
 
 const loadReview = async (id) => {
   const targetId = id || reviewForm.prescription?.prescriptionId
@@ -502,15 +496,19 @@ const loadReview = async (id) => {
   }
 }
 
-const fetchList = async (page = currentPage.value, size = pageSize.value) => {
+const fetchList = async (page, size) => {
+  // 确保 page 和 size 是有效的数字，如果接收到事件对象则使用默认值
+  const pageNum = typeof page === 'number' ? page : currentPage.value
+  const pageSize_ = typeof size === 'number' ? size : pageSize.value
+  
   isListLoading.value = true
   try {
-    const res = await fetch(`${API_BASE}/prescription/list?page=${page}&size=${size}`)
+    const res = await fetch(`${API_BASE}/prescription/list?page=${pageNum}&size=${pageSize_}`)
     if (!res.ok) throw new Error('无法获取处方列表')
     const data = await res.json()
     prescriptions.value = Array.isArray(data.records) ? data.records : []
     totalCount.value = data.total || 0
-    currentPage.value = data.page || page
+    currentPage.value = data.page || pageNum
   } catch (e) {
     console.error('fetchList error', e)
     showToast('error', e.message || '加载处方列表失败')
@@ -540,14 +538,17 @@ const openPrescription = async (prescriptionId) => {
   await loadReview(prescriptionId)
 }
 
-const refreshReview = () => {
+const refreshReview = async () => {
   const id = reviewForm.prescription?.prescriptionId
-  if (id) {
-    loadReview(id)
-  } else {
-    reviewData.value = null
-    reviewForm.prescription = null
-    reviewForm.prescriptionDrugs = []
+  if (!id) {
+    showToast('info', '请先选择处方进行查看')
+    return
+  }
+  try {
+    isReviewLoading.value = true
+    await loadReview(id)
+  } finally {
+    isReviewLoading.value = false
   }
 }
 
@@ -586,6 +587,14 @@ const submitReview = async () => {
       throw new Error(data.message || '审核提交失败')
     }
     showToast('success', '审核已提交，状态更新为已审核')
+    // 提交成功后刷新处方列表
+    await fetchList(currentPage.value, pageSize.value)
+    // 关闭模态框
+    closeReviewModal()
+    // 清空审核表单
+    reviewData.value = null
+    reviewForm.prescription = null
+    reviewForm.prescriptionDrugs = []
   } catch (error) {
     showToast('error', error.message)
   } finally {
