@@ -52,7 +52,10 @@ public class JdbcChatMemoryRepository implements ChatMemoryRepository {
         List<LocalDateTime> existingTimestamps = jdbcTemplate.query(
                 "select timestamp from " + TABLE + " where conversation_id = ? order by timestamp asc",
                 new Object[]{conversationId},
-                (rs, idx) -> rs.getTimestamp(1).toLocalDateTime()
+                (rs, idx) -> {
+                    java.sql.Timestamp ts = rs.getTimestamp(1);
+                    return ts != null ? ts.toLocalDateTime() : null;
+                }
         );
 
         jdbcTemplate.update("delete from " + TABLE + " where conversation_id = ?", conversationId);
@@ -69,6 +72,9 @@ public class JdbcChatMemoryRepository implements ChatMemoryRepository {
             LocalDateTime ts = idx < existingTimestamps.size()
                     ? existingTimestamps.get(idx)
                     : now.plusNanos(idx);
+            if (ts == null) {
+                ts = now.plusNanos(idx);
+            }
             idx++;
             batch.add(new Object[]{conversationId, content, type.getValue(), ts});
         }

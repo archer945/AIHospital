@@ -98,7 +98,7 @@ public final class PdfExportUtil {
 
             if (StringUtils.hasText(prescription.getAiRecommendation())) {
                 document.add(new Paragraph("AI 建议/注意事项", labelFont));
-                document.add(new Paragraph(formatMaybeJson(prescription.getAiRecommendation()), bodyFont));
+                document.add(new Paragraph(formatRecommendation(prescription.getAiRecommendation()), bodyFont));
             }
 
             document.close();
@@ -133,6 +133,69 @@ public final class PdfExportUtil {
             return OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
         } catch (Exception ignored) {
             return text;
+        }
+    }
+
+    /**
+     * 将 AI 推荐 JSON 转成便于阅读的中文描述；若无法解析则回退到格式化 JSON/原文。
+     */
+    private static String formatRecommendation(String text) {
+        if (!StringUtils.hasText(text)) {
+            return text;
+        }
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(text);
+            if (node.isObject()) {
+                StringBuilder sb = new StringBuilder();
+                if (node.has("diagnosis")) {
+                    sb.append("诊断：").append(node.get("diagnosis").asText("")).append("\n");
+                }
+                if (node.has("symptoms") && node.get("symptoms").isArray()) {
+                    sb.append("症状：");
+                    sb.append(String.join("；", OBJECT_MAPPER.convertValue(node.get("symptoms"), java.util.List.class)));
+                    sb.append("\n");
+                }
+                if (node.has("treatment_plan")) {
+                    sb.append("治疗方案：").append(node.get("treatment_plan").asText("")).append("\n");
+                }
+                if (node.has("recommended_drugs") && node.get("recommended_drugs").isArray()) {
+                    sb.append("推荐用药：\n");
+                    for (JsonNode d : node.get("recommended_drugs")) {
+                        sb.append(" - 药品：").append(d.path("drug_name").asText(""));
+                        if (d.hasNonNull("dosage")) sb.append("；剂量：").append(d.get("dosage").asText());
+                        if (d.hasNonNull("usage")) sb.append("；用法：").append(d.get("usage").asText());
+                        if (d.hasNonNull("note")) sb.append("；备注：").append(d.get("note").asText());
+                        sb.append("\n");
+                    }
+                }
+                if (node.has("drug_interactions") && node.get("drug_interactions").isArray()) {
+                    sb.append("药物相互作用：\n");
+                    for (JsonNode d : node.get("drug_interactions")) {
+                        String a = d.path("drug_a").asText("");
+                        String b = d.path("drug_b").asText("");
+                        String level = d.path("interaction_level").asText("");
+                        sb.append(" - ").append(a).append(" + ").append(b);
+                        if (StringUtils.hasText(level)) sb.append("（").append(level).append("）");
+                        if (d.hasNonNull("description")) sb.append("：").append(d.get("description").asText());
+                        sb.append("\n");
+                    }
+                }
+                if (node.has("warnings")) {
+                    sb.append("警告：").append(node.get("warnings").asText("")).append("\n");
+                }
+                if (node.has("advice")) {
+                    sb.append("健康建议：").append(node.get("advice").asText("")).append("\n");
+                }
+                String rendered = sb.toString().trim();
+                if (StringUtils.hasText(rendered)) {
+                    return rendered;
+                }
+            } else if (node.isTextual()) {
+                return node.asText();
+            }
+            return formatMaybeJson(text);
+        } catch (Exception ignored) {
+            return formatMaybeJson(text);
         }
     }
 }
