@@ -5,19 +5,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
 import com.lowagie.text.Font;
+import com.lowagie.text.List;
+import com.lowagie.text.ListItem;
 import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
-import com.lowagie.text.pdf.BaseFont;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.BaseFont;
 import com.neusoft.neu23.entity.DrugInfo;
 import com.neusoft.neu23.entity.Prescription;
 import com.neusoft.neu23.entity.PrescriptionDrug;
 import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayOutputStream;
+import java.awt.Color;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -54,7 +58,7 @@ public final class PdfExportUtil {
     }
 
     public static byte[] buildPrescriptionPdf(Prescription prescription,
-                                              List<PrescriptionDrug> drugs,
+                                              java.util.List<PrescriptionDrug> drugs,
                                               Map<Long, DrugInfo> drugInfoMap) {
         try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 36, 36, 36, 36);
@@ -62,43 +66,71 @@ public final class PdfExportUtil {
             document.open();
 
             BaseFont baseFont = BaseFont.createFont("STSongStd-Light", "UniGB-UCS2-H", BaseFont.NOT_EMBEDDED);
-            Font titleFont = new Font(baseFont, 16, Font.BOLD);
-            Font labelFont = new Font(baseFont, 12, Font.BOLD);
-            Font bodyFont = new Font(baseFont, 12, Font.NORMAL);
+            Font titleFont = new Font(baseFont, 18, Font.BOLD, new Color(34, 64, 105));
+            Font labelFont = new Font(baseFont, 13, Font.BOLD, new Color(0, 122, 204));
+            Font bodyFont = new Font(baseFont, 11, Font.NORMAL, new Color(33, 37, 41));
+            Font metaFont = new Font(baseFont, 10, Font.NORMAL, new Color(90, 90, 90));
 
-            document.add(new Paragraph("患者处方", titleFont));
-            document.add(new Paragraph("处方ID: " + prescription.getPrescriptionId(), bodyFont));
-            document.add(new Paragraph("挂号ID: " + valueOrFallback(prescription.getRegisterId()), bodyFont));
-            document.add(new Paragraph("患者ID: " + valueOrFallback(prescription.getPatientId()), bodyFont));
+            Paragraph title = new Paragraph("患者处方", titleFont);
+            title.setAlignment(Paragraph.ALIGN_CENTER);
+            title.setSpacingAfter(10f);
+            document.add(title);
+
+            // 基本信息块
+            PdfPTable infoTable = new PdfPTable(new float[]{1.2f, 1f, 1f});
+            infoTable.setWidthPercentage(100);
+            infoTable.getDefaultCell().setBorder(com.lowagie.text.Rectangle.NO_BORDER);
+            infoTable.addCell(cellNoBorder("处方ID: " + prescription.getPrescriptionId(), bodyFont));
+            infoTable.addCell(cellNoBorder("挂号ID: " + valueOrFallback(prescription.getRegisterId()), bodyFont));
+            infoTable.addCell(cellNoBorder("患者ID: " + valueOrFallback(prescription.getPatientId()), bodyFont));
             String createdAt = prescription.getCreateTime() != null
                     ? prescription.getCreateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
                     : "未记录";
-            document.add(new Paragraph("开立时间: " + createdAt, bodyFont));
-            document.add(new Paragraph("\n诊断", labelFont));
-            document.add(new Paragraph(valueOrFallback(prescription.getDiagnosis(), "未填写"), bodyFont));
+            PdfPCell timeCell = cellNoBorder("开立时间: " + createdAt, metaFont);
+            timeCell.setColspan(3);
+            infoTable.addCell(timeCell);
+            document.add(infoTable);
+            document.add(withSpacing("", bodyFont, 2f, 6f));
 
-            document.add(new Paragraph("\n用药清单", labelFont));
+            document.add(withSpacing("诊断", labelFont, 6f, 4f));
+            document.add(withSpacing(valueOrFallback(prescription.getDiagnosis(), "未填写"), bodyFont, 0f, 10f));
+
+            document.add(withSpacing("用药清单", labelFont, 4f, 6f));
             if (drugs == null || drugs.isEmpty()) {
-                document.add(new Paragraph("暂无药品记录", bodyFont));
+                document.add(withSpacing("暂无药品记录", bodyFont, 0f, 10f));
             } else {
-                for (int i = 0; i < drugs.size(); i++) {
-                    PrescriptionDrug drug = drugs.get(i);
+                PdfPTable drugTable = new PdfPTable(new float[]{1.6f, 1f, 2f});
+                drugTable.setWidthPercentage(100);
+                drugTable.setSpacingBefore(4f);
+                drugTable.setSpacingAfter(10f);
+
+                drugTable.addCell(tableHeaderCell("药品", labelFont));
+                drugTable.addCell(tableHeaderCell("剂量", labelFont));
+                drugTable.addCell(tableHeaderCell("说明", labelFont));
+
+                boolean shaded = false;
+                for (PrescriptionDrug drug : drugs) {
                     DrugInfo info = drugInfoMap.get(drug.getDrugId());
                     String drugName = info != null
                             ? info.getName()
                             : (drug.getDrugId() != null ? "药品ID: " + drug.getDrugId() : "未指定药品");
-                    document.add(new Paragraph((i + 1) + ". " + drugName, labelFont));
-                    document.add(new Paragraph("剂量: " + valueOrFallback(drug.getDosage(), "未填写"), bodyFont));
-                    if (StringUtils.hasText(drug.getReason())) {
-                        document.add(new Paragraph("说明: " + formatMaybeJson(drug.getReason()), bodyFont));
-                    }
-                    document.add(new Paragraph("\n", bodyFont));
+                    drugTable.addCell(tableBodyCell(drugName, bodyFont, shaded));
+                    drugTable.addCell(tableBodyCell(valueOrFallback(drug.getDosage(), "未填写"), bodyFont, shaded));
+                    String reason = StringUtils.hasText(drug.getReason()) ? formatMaybeJson(drug.getReason()) : "—";
+                    drugTable.addCell(tableBodyCell(reason, bodyFont, shaded));
+                    shaded = !shaded;
                 }
+                document.add(drugTable);
             }
 
             if (StringUtils.hasText(prescription.getAiRecommendation())) {
-                document.add(new Paragraph("AI 建议/注意事项", labelFont));
-                document.add(new Paragraph(formatRecommendation(prescription.getAiRecommendation()), bodyFont));
+                document.add(withSpacing("AI 建议/注意事项", labelFont, 6f, 4f));
+                String recText = formatRecommendation(prescription.getAiRecommendation());
+                for (String line : recText.split("\\r?\\n")) {
+                    if (StringUtils.hasText(line)) {
+                        document.add(new Paragraph(line, bodyFont));
+                    }
+                }
             }
 
             document.close();
@@ -197,5 +229,37 @@ public final class PdfExportUtil {
         } catch (Exception ignored) {
             return formatMaybeJson(text);
         }
+    }
+
+    private static Paragraph withSpacing(String text, Font font, float spacingBefore, float spacingAfter) {
+        Paragraph p = new Paragraph(text, font);
+        p.setSpacingBefore(spacingBefore);
+        p.setSpacingAfter(spacingAfter);
+        return p;
+    }
+
+    private static PdfPCell cellNoBorder(String text, Font font) {
+        PdfPCell cell = new PdfPCell(new Paragraph(text, font));
+        cell.setBorder(com.lowagie.text.Rectangle.NO_BORDER);
+        cell.setPaddingBottom(4f);
+        return cell;
+    }
+
+    private static PdfPCell tableHeaderCell(String text, Font font) {
+        PdfPCell cell = new PdfPCell(new Paragraph(text, font));
+        cell.setBackgroundColor(new Color(245, 249, 255));
+        cell.setPadding(6f);
+        cell.setHorizontalAlignment(PdfPCell.ALIGN_LEFT);
+        return cell;
+    }
+
+    private static PdfPCell tableBodyCell(String text, Font font, boolean shaded) {
+        PdfPCell cell = new PdfPCell(new Paragraph(text, font));
+        if (shaded) {
+            cell.setBackgroundColor(new Color(250, 252, 255));
+        }
+        cell.setPadding(6f);
+        cell.setHorizontalAlignment(PdfPCell.ALIGN_LEFT);
+        return cell;
     }
 }
