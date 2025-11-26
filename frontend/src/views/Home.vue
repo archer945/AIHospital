@@ -210,14 +210,33 @@
                       <h4>药品明细与审核</h4>
                       <p class="muted">可对 AI 推荐药品进行剂量、理由调整</p>
                     </div>
-                    <button class="btn btn-secondary" @click="addDrugRow">新增药品</button>
+                    <button class="btn btn-secondary" @click="toggleDrugSearch">新增药品</button>
                   </header>
+
+                  <!-- 药品查询区域 -->
+                  <div v-if="showDrugSearch" class="drug-search-panel" style="margin-bottom: 16px; padding: 12px; background: rgba(14, 165, 233, 0.05); border-radius: 10px; border: 1px solid rgba(14, 165, 233, 0.1);">
+                    <div style="display:flex; gap:8px; margin-bottom:12px; align-items:center;">
+                      <input v-model="drugSearchQuery" type="text" placeholder="输入药品名称搜索..." style="flex:1; padding:8px 12px; border-radius:8px; border: 1px solid rgba(14, 165, 233, 0.25);" @keyup.enter="searchDrugs" />
+                      <button class="btn btn-primary btn-sm" @click="searchDrugs" :disabled="drugSearchLoading">{{ drugSearchLoading ? '搜索中...' : '搜索' }}</button>
+                      <button class="btn btn-secondary btn-sm" @click="toggleDrugSearch">关闭</button>
+                    </div>
+                    <div v-if="drugSearchResults.length > 0" style="max-height: 300px; overflow-y: auto;">
+                      <div class="drug-search-result" v-for="drug in drugSearchResults" :key="drug.drugId" style="padding:8px 12px; background:white; border-radius:6px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; border:1px solid rgba(14,165,233,0.12);">
+                        <div style="flex:1;">
+                          <div style="font-weight:500; color:#1f2937;">{{ drug.name }}</div>
+                          <div style="font-size:12px; color:#6b7280; margin-top:2px;">ID: {{ drug.drugId }} | 类别: {{ drug.category || '未分类' }}</div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" @click="selectDrugAndAdd(drug)" style="white-space:nowrap;">添加</button>
+                      </div>
+                    </div>
+                    <div v-else-if="drugSearchAttempted && !drugSearchLoading" style="text-align:center; color:#6b7280; padding:12px;">未找到匹配的药品</div>
+                  </div>
 
                   <div class="drug-table-wrapper">
                     <table class="drug-table">
                       <thead>
                       <tr>
-                        <th>药品ID</th>
+                        <th>药品名称</th>
                         <th>剂量</th>
                         <th>理由/备注</th>
                         <th>操作</th>
@@ -226,7 +245,7 @@
                       <tbody>
                       <tr v-for="(drug, index) in reviewForm.prescriptionDrugs" :key="drug.id || index">
                         <td>
-                          <input v-model="drug.drugId" placeholder="药品ID" />
+                          <span class="drug-name">{{ drug.drugName || '未知' }}</span>
                         </td>
                         <td>
                           <input v-model="drug.dosage" placeholder="剂量" />
@@ -318,6 +337,13 @@ const filteredList = computed(() => {
     return presId.includes(q) || pid.includes(q) || rid.includes(q) || diag.includes(q)
   })
 })
+
+// 药品搜索相关
+const showDrugSearch = ref(false)
+const drugSearchQuery = ref('')
+const drugSearchResults = ref([])
+const drugSearchLoading = ref(false)
+const drugSearchAttempted = ref(false)
 
 const openReviewModal = async () => {
   showReviewModal.value = true
@@ -595,12 +621,54 @@ const exportCurrentPrescription = () => {
   exportPrescriptionPdf(id)
 }
 
-const addDrugRow = () => {
+const toggleDrugSearch = () => {
+  showDrugSearch.value = !showDrugSearch.value
+  if (showDrugSearch.value) {
+    drugSearchQuery.value = ''
+    drugSearchResults.value = []
+    drugSearchAttempted.value = false
+  }
+}
+
+const searchDrugs = async () => {
+  const query = drugSearchQuery.value.trim()
+  if (!query) {
+    showToast('error', '请输入药品名称')
+    return
+  }
+  drugSearchLoading.value = true
+  drugSearchAttempted.value = true
+  try {
+    const res = await fetch(`${API_BASE}/drug-info/search?name=${encodeURIComponent(query)}`)
+    if (res.ok) {
+      const data = await res.json()
+      drugSearchResults.value = data.records || []
+    } else {
+      showToast('error', '搜索失败')
+      drugSearchResults.value = []
+    }
+  } catch (e) {
+    console.error('药品搜索错误', e)
+    showToast('error', '搜索出错')
+    drugSearchResults.value = []
+  } finally {
+    drugSearchLoading.value = false
+  }
+}
+
+const selectDrugAndAdd = (drug) => {
+  // 添加一个新药品行，并填充药品ID和名称
   reviewForm.prescriptionDrugs.push({
-    drugId: '',
+    drugId: drug.drugId,
     dosage: '',
-    reason: ''
+    reason: '',
+    drugName: drug.name
   })
+  showToast('success', `已添加药品：${drug.name}`)
+  // 可选：关闭搜索面板
+  showDrugSearch.value = false
+  drugSearchQuery.value = ''
+  drugSearchResults.value = []
 }
 
 const removeDrug = (index) => {
@@ -1155,6 +1223,16 @@ onBeforeUnmount(() => {
 
 .drug-table textarea {
   min-width: 200px;
+}
+
+.drug-name {
+  display: inline-block;
+  padding: 4px 8px;
+  background: rgba(14, 165, 233, 0.08);
+  border-radius: 6px;
+  color: var(--primary-blue, #0ea5e9);
+  font-weight: 500;
+  font-size: 14px;
 }
 
 .link {

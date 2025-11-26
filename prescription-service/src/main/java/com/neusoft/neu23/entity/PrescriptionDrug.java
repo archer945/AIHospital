@@ -28,4 +28,7 @@ public class PrescriptionDrug {
     
     @TableField(value = "create_time", fill = FieldFill.INSERT)
     private LocalDateTime createTime;
+
+    @TableField(exist = false)
+    private String drugName;
 }

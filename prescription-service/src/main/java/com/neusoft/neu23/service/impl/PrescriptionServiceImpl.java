@@ -6,15 +6,21 @@ import com.neusoft.neu23.dto.PrescriptionReviewDTO;
 import com.neusoft.neu23.entity.PatientCase;
 import com.neusoft.neu23.entity.Prescription;
 import com.neusoft.neu23.entity.PrescriptionDrug;
+import com.neusoft.neu23.entity.DrugInfo;
 import com.neusoft.neu23.mapper.PrescriptionMapper;
 import com.neusoft.neu23.service.PatientCaseService;
 import com.neusoft.neu23.service.PrescriptionDrugService;
 import com.neusoft.neu23.service.PrescriptionService;
+import com.neusoft.neu23.service.DrugInfoService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Prescription> implements PrescriptionService {
@@ -24,6 +30,9 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
 
     @Autowired
     private PrescriptionDrugService prescriptionDrugService;
+
+    @Autowired
+    private DrugInfoService drugInfoService;
 
     @Override
     public PrescriptionReviewDTO getPrescriptionForReview(Long prescriptionId) {
@@ -43,6 +52,25 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
                 new LambdaQueryWrapper<PrescriptionDrug>()
                         .eq(PrescriptionDrug::getPrescriptionId, prescriptionId)
         );
+
+        // 获取所有药品信息映射
+        List<Long> drugIds = prescriptionDrugs.stream()
+                .map(PrescriptionDrug::getDrugId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, DrugInfo> drugInfoMap = new HashMap<>();
+        if (!drugIds.isEmpty()) {
+            drugInfoService.listByIds(drugIds).forEach(info -> drugInfoMap.put(info.getDrugId(), info));
+        }
+
+        // 为每个处方药品设置药品名称
+        prescriptionDrugs.forEach(drug -> {
+            DrugInfo info = drugInfoMap.get(drug.getDrugId());
+            if (info != null) {
+                drug.setDrugName(info.getName());
+            }
+        });
 
         PrescriptionReviewDTO reviewDTO = new PrescriptionReviewDTO();
         reviewDTO.setPrescription(prescription);
