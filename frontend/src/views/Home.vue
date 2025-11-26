@@ -367,13 +367,13 @@ watch(activeTab, (val) => {
   }
 })
 
-const loadConversations = async (page = 1, size = 200) => {
+const loadConversations = async (page = 1, size = 200, force = false) => {
   const reg = patientForm.registerId ? String(patientForm.registerId).trim() : null
   const pid = patientForm.patientId ? String(patientForm.patientId).trim() : null
   // 如果没有任何标识，跳过加载
   if (!reg && !pid) return
   // 如果已加载过相同 ID 则跳过
-  if (lastLoadedIds.registerId === reg && lastLoadedIds.patientId === pid) return
+  if (!force && lastLoadedIds.registerId === reg && lastLoadedIds.patientId === pid) return
 
   isConversationsLoading.value = true
   try {
@@ -390,11 +390,14 @@ const loadConversations = async (page = 1, size = 200) => {
     const records = Array.isArray(data.records) ? data.records : []
     // 后端按时间倒序返回，前端展示为从旧到新
     const ordered = records.slice().reverse()
-    const mapped = ordered.map((r) => ({
-      role: (r.type && r.type.toLowerCase() === 'user') ? 'user' : 'ai',
-      content: r.content,
-      time: r.timestamp || r.createTime || new Date()
-    }))
+    const mapped = ordered.map((r) => {
+      const role = (r.type && r.type.toLowerCase() === 'user') ? 'user' : 'ai'
+      return {
+        role,
+        content: role === 'user' ? normalizeUserContent(r.content) : r.content,
+        time: r.timestamp || r.createTime || new Date()
+      }
+    })
     // 用历史记录替换当前聊天记录（保留当前会话中已存在的 AI 响应）
     chatHistory.value = mapped
     if (mapped.length === 0) {
@@ -462,6 +465,8 @@ const sendMessage = async () => {
       scrollChatToBottom()
     })
     showToast('success', 'AI 已回复')
+    // 使用后端存储的 timestamp 更新记录
+    loadConversations(1, 200, true).catch((e) => console.error('refresh conversations after reply failed', e))
   } catch (error) {
     showToast('error', error.message)
     chatHistory.value.pop()
@@ -613,7 +618,28 @@ const showToast = (type, message) => {
 
 const formatTime = (time) => {
   const date = new Date(time)
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// 历史记录中，后端为了提示 AI 会在用户输入前拼接“患者当前症状描述：”等前置信息。
+// 仅用于展示：提取用户原始输入的部分，避免页面显示冗余提示文字。
+const normalizeUserContent = (text) => {
+  if (!text) return ''
+  const raw = String(text)
+  const prefix = '患者当前症状描述：'
+  const idx = raw.indexOf(prefix)
+  if (idx >= 0) {
+    const after = raw.slice(idx + prefix.length)
+    const untilLineBreak = after.split(/\r?\n/)[0]?.trim()
+    if (untilLineBreak) return untilLineBreak
+  }
+  return raw.replace(/【患者信息】.*/s, '').trim() || raw
 }
 
 const renderMarkdown = (text) => {

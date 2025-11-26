@@ -48,6 +48,13 @@ public class JdbcChatMemoryRepository implements ChatMemoryRepository {
 
     @Override
     public void saveAll(String conversationId, List<Message> messages) {
+        // Preserve existing timestamps to avoid resetting all history to "now" on each save
+        List<LocalDateTime> existingTimestamps = jdbcTemplate.query(
+                "select timestamp from " + TABLE + " where conversation_id = ? order by timestamp asc",
+                new Object[]{conversationId},
+                (rs, idx) -> rs.getTimestamp(1).toLocalDateTime()
+        );
+
         jdbcTemplate.update("delete from " + TABLE + " where conversation_id = ?", conversationId);
         if (messages == null || messages.isEmpty()) {
             return;
@@ -59,7 +66,10 @@ public class JdbcChatMemoryRepository implements ChatMemoryRepository {
         for (Message message : messages) {
             MessageType type = message.getMessageType();
             String content = Objects.toString(message.getText(), "");
-            LocalDateTime ts = now.plusNanos(idx++);
+            LocalDateTime ts = idx < existingTimestamps.size()
+                    ? existingTimestamps.get(idx)
+                    : now.plusNanos(idx);
+            idx++;
             batch.add(new Object[]{conversationId, content, type.getValue(), ts});
         }
         jdbcTemplate.batchUpdate(insertSql, batch);
